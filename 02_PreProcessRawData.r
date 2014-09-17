@@ -63,15 +63,33 @@ setwd("/Users/alexstephens/Development/kaggle/africa/data/proc")
 load("01_AfricaRawTest.Rdata")
 load("01_AfricaRawTrain.Rdata")
 
+
+##******************************************************************
+## Basic manipulations
+##******************************************************************
+
 ##------------------------------------------------------------------
 ## Append NA(s) for the targets to the test data
 ##------------------------------------------------------------------
 test.raw[, c("ca","p","ph","soc","sand")]   <- NA
 
 ##------------------------------------------------------------------
-## Combine the two dataset
+## Append source tags
+##------------------------------------------------------------------
+train.raw$id    <- 1
+test.raw$id     <- 0
+
+##------------------------------------------------------------------
+## Create binary flags for the depth "factor"
+##------------------------------------------------------------------
+train.raw$depth     <- ifelse(train.raw$depth == "Topsoil", 1, 0)
+test.raw$depth      <- ifelse(test.raw$depth == "Topsoil", 1, 0)
+
+##------------------------------------------------------------------
+## Combine the two datasets into a single file
 ##------------------------------------------------------------------
 comb.raw    <- rbind(train.raw, test.raw)
+
 
 
 ##******************************************************************
@@ -84,10 +102,6 @@ comb.raw    <- rbind(train.raw, test.raw)
 
 ## extract raw spectra
 spectra.raw <- as.matrix(comb.raw[ , c(2:3579)])
-
-## compute a moving average
-spectra.ma3 <- t(apply(spectra.raw, 1, ma, 3))
-
 
 ## identify known problem areas
 spectra.co2_bands   <- c("m2379.76", "m2377.83", "m2375.9", "m2373.97", "m2372.04",
@@ -168,6 +182,16 @@ spectra.pct_var         <- cumsum(spectra.raw.svd$d / sum(spectra.raw.svd$d))
 #spectra.der.2.pct_var   <- cumsum(spectra.der.2.svd$d / sum(spectra.der.2.svd$d))
 
 
+
+
+## do a box-cox transformation if all x > 0
+#if ( any(x < 0) ) {
+#    orig.x <- x
+#} else {
+#    orig.x  <- x
+#    lambda	<- BoxCox.lambda(x, method="guerrero", lower=0, upper=1)
+#    x	    <- BoxCox(x, lambda)
+#}
 
 
 

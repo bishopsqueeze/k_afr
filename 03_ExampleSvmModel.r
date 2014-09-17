@@ -37,11 +37,10 @@
 ##          (LSTD = day time temperature, LSTN = night time temperature)
 ##  Ref:    average long-term Reflectance measurements from MODIS satellite images
 ##          (Ref1 = blue, Ref2 = red, Ref3 = near-infrared, Ref7 = mid-infrared)
-##  Reli: topographic Relief calculated from Shuttle Radar Topography mission elevation data
+##  Reli:   topographic Relief calculated from Shuttle Radar Topography mission elevation data
 ##  TMAP & TMFI: average long-term Tropical Rainfall Monitoring Mission data
 ##          (TMAP = mean annual precipitation, TMFI = modified Fournier index)
 ##------------------------------------------------------------------
-
 
 ##------------------------------------------------------------------
 ## Load libraries
@@ -54,12 +53,7 @@ library(doMC)
 ##------------------------------------------------------------------
 ## register cores
 ##------------------------------------------------------------------
-registerDoMC(2)
-
-##------------------------------------------------------------------
-## Load Libraries
-##------------------------------------------------------------------
-library(caret)
+registerDoMC(4)
 
 ##------------------------------------------------------------------
 ## Clear the workspace
@@ -78,18 +72,17 @@ setwd("/Users/alexstephens/Development/kaggle/africa/data/proc")
 load("01_AfricaRawTrain.Rdata")
 
 ##------------------------------------------------------------------
-## Append NA(s) for the targets to the test data
+## Define target variables
 ##------------------------------------------------------------------
 target.vars <- c("ca","p","ph","soc","sand")
-#test.raw[, predict.vars]   <- NA
 
 
 ##******************************************************************
-## Process the spectra
+## Simple beat-the-benchmark model
 ##******************************************************************
 
 ##------------------------------------------------------------------
-## Step 1: Pre-process the data
+## Step 1: Identify features in the data
 ##------------------------------------------------------------------
 
 ## identify known problem areas
@@ -103,34 +96,40 @@ target.idx          <- which(names(train.raw) %in% target.vars)
 nonspec.idx         <- setdiff(2:3600, union(spec.idx, target.idx))
 spectra.co2_index   <- which(colnames(train.raw) %in% spectra.co2_bands)
 
-
-## extract wavenumbers and nanometers
-#spectra.wn  <- as.numeric(gsub("m","",colnames(spectra.raw)))  ## spectral wave numbers
-#spectra.nm  <- 1 / (spectra.wn * (1.0e-07))                 ## in nano meters
+## create a binary variables for depth
+train.raw$depth     <- ifelse(train.raw$depth == "Topsoil", 1, 0)
 
 
 ##------------------------------------------------------------------
-## Step 3:  Mean-subtract the data chunks
+## Step 2:  Use caret to find the optimal tuning params for each fit
 ##------------------------------------------------------------------
 
 ctrl        <- trainControl(method = "cv", savePred=TRUE)
-#svm.grid    <- expand.grid(C = 2^(seq(-2,10,1)))
-svm.grid    <- expand.grid(C = 1)
+svm.grid    <- expand.grid(C = 2^(seq(-2,10,1)))
 tmp.res     <- list()
 
+## loop over each target variable
 for (i in 1:length(target.vars)) {
-    tmp.data            <- train.raw[ , union(target.idx[i], spec.idx)]
+    
+    ## load all raw variables
+    tmp.data            <- train.raw[, c(target.idx[i], spec.idx, nonspec.idx)]
+    
+    ## use all variables in the file
     tmp.formula         <- as.formula(paste0(target.vars[i], " ~ ."))
+    
+    ## save the results
     tmp.res[[i]]        <- train(tmp.formula, data=tmp.data, method = "svmLinear", verbose=FALSE, trControl = ctrl, tuneGrid=svm.grid)
 }
 
-as.formula(paste("y ~ ", paste(xnam, collapse= "+")))
-target.idx[i]
 
-> mod <- train(Sepal.Length~., data=iris, method = "svmLinear", trControl = ctrl)
-> head(mod$pred)
+## minmum RMSE (all variables)
+## [1] = 0.335 +- 0.113, C = 1
+## [2] = 0.830 +- 0.355, C = 16
+## [3] = 0.326 +- 0.058, C = 8
+## [4] = 0.303 +- 0.072, C = 1
+## [5] = 0.333 +- 0.049, C = 1
 
-
+## use the propectr package to pre-process some of the spectra
 
 
 ##------------------------------------------------------------------

@@ -38,6 +38,5 @@ colnames(train.raw) <- tolower(colnames(train.raw))
 setwd("/Users/alexstephens/Development/kaggle/africa/data/proc")
 
 ## save results to separate files given the size
-save(test.raw,  file="01_AfricaRawTest.Rdata")
-save(train.raw, file="01_AfricaRawTrain.Rdata")
+save(train.raw, test.raw,  file="01_AfricaRawData.Rdata")
 

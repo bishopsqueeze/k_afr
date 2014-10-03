@@ -60,36 +60,60 @@ setwd("/Users/alexstephens/Development/kaggle/africa/data/proc")
 ##------------------------------------------------------------------
 ## Load raw data
 ##------------------------------------------------------------------
-load("01_AfricaRawTest.Rdata")
-load("01_AfricaRawTrain.Rdata")
+load("01_AfricaRawData.Rdata")
+
+##------------------------------------------------------------------
+## Target Vars
+##------------------------------------------------------------------
+target.vars     <- c("ca", "p", "ph", "soc", "sand")    ## raw
+target.bc.vars  <- paste0(target.vars, ".bc")           ## box-cox x-formed
 
 
 ##******************************************************************
-## Basic manipulations
+## Modify base features
 ##******************************************************************
+
+##------------------------------------------------------------------
+## Clone the raw data
+##------------------------------------------------------------------
+train.tmp  <- train.raw
+test.tmp   <- test.raw
+
+##------------------------------------------------------------------
+## Compute BoxCox lambdas; add 2 to ensure positive values
+##------------------------------------------------------------------
+target.bc.lambda    <- vector(, length=length(target.vars))
+for (i in 1:length(target.vars)) {
+    tmp.var                                 <- target.vars[i]
+    target.bc.lambda[i]                     <- BoxCox.lambda((train.tmp[, tmp.var]+2))
+    train.tmp[, paste0(tmp.var, ".bc")]     <- BoxCox((train.tmp[, tmp.var]+2), target.bc.lambda[i])
+}
+names(target.bc.lambda) <- target.vars
 
 ##------------------------------------------------------------------
 ## Append NA(s) for the targets to the test data
 ##------------------------------------------------------------------
-test.raw[, c("ca","p","ph","soc","sand")]   <- NA
+test.tmp[, target.vars]     <- NA
+test.tmp[, target.bc.vars]  <- NA
 
 ##------------------------------------------------------------------
 ## Append source tags
 ##------------------------------------------------------------------
-train.raw$id    <- 1
-test.raw$id     <- 0
+train.tmp$id    <- 1
+test.tmp$id     <- 0
 
 ##------------------------------------------------------------------
 ## Create binary flags for the depth "factor"
+##  Topsoil = 1
+##  Subsoil = 0
 ##------------------------------------------------------------------
-train.raw$depth     <- ifelse(train.raw$depth == "Topsoil", 1, 0)
-test.raw$depth      <- ifelse(test.raw$depth == "Topsoil", 1, 0)
+train.tmp$depth     <- ifelse(train.tmp$depth == "Topsoil", 1, 0)
+test.tmp$depth      <- ifelse(test.tmp$depth == "Topsoil", 1, 0)
 
 ##------------------------------------------------------------------
 ## Combine the two datasets into a single file
 ##------------------------------------------------------------------
-comb.raw    <- rbind(train.raw, test.raw)
-
+comb.tmp           <- rbind(train.tmp, test.tmp)
 
 
 ##******************************************************************
@@ -97,108 +121,88 @@ comb.raw    <- rbind(train.raw, test.raw)
 ##******************************************************************
 
 ##------------------------------------------------------------------
-## Step 1: Pre-process the data
+## Step 1: Extract spectra & basic feautres
 ##------------------------------------------------------------------
+
+## define spectra index
+spectra.index   <- 2:3579
 
 ## extract raw spectra
-spectra.raw <- as.matrix(comb.raw[ , c(2:3579)])
+spectra <- as.matrix(comb.tmp[ , spectra.index])
 
 ## identify known problem areas
-spectra.co2_bands   <- c("m2379.76", "m2377.83", "m2375.9", "m2373.97", "m2372.04",
-"m2370.11", "m2368.18", "m2366.26","m2364.33", "m2362.4",
-"m2360.47", "m2358.54", "m2356.61", "m2354.68", "m2352.76")
+spectra.co2_bands   <-
+c("m2379.76", "m2377.83", "m2375.9",  "m2373.97", "m2372.04",
+  "m2370.11", "m2368.18", "m2366.26", "m2364.33", "m2362.4",
+  "m2360.47", "m2358.54", "m2356.61", "m2354.68", "m2352.76")
 
 ## identify problem columns
-spectra.co2_index   <- which(colnames(spectra.raw) %in% spectra.co2_bands)
+spectra.co2_index   <- which(colnames(spectra) %in% spectra.co2_bands)
 
-## extract wavenumbers and nanometers
-spectra.wn  <- as.numeric(gsub("m","",colnames(spectra.raw)))  ## spectral wave numbers
-spectra.nm  <- 1 / (spectra.wn * (1.0e-07))                 ## in nano meters
+## extract wavenumbers and wavelengths (in nanometers)
+spectra.wn      <- as.numeric(gsub("m","",colnames(spectra)))   ## spectral wave numbers
+spectra.nm      <- 1 / (spectra.wn * (1.0e-07))                 ## in nanometers
 
 
 ##------------------------------------------------------------------
-## Step 2:  Compute derivatives of the spectra
+## Step 2: Compute derivatives of the spectra
 ##------------------------------------------------------------------
 
 ## components used to compute the finite differences
-fx              <- spectra.raw
-fx_plus_h       <- cbind(NA, spectra.raw)[, -(dim(spectra.raw)[2]+1)]
-fx_minus_h      <- cbind(spectra.raw[, -1], NA)
+fx              <- spectra
+fx_plus_h       <- cbind(NA, spectra)[, -(ncol(spectra)+1)]
+fx_minus_h      <- cbind(spectra[, -1], NA)
 
 ## compute the first/second derivatives
 spectra.der.1   <- fx_plus_h - fx
 spectra.der.2   <- fx_plus_h - 2*fx + fx_minus_h
 
-
-##------------------------------------------------------------------
-## Step 3:  Mean-subtract the data chunks
-##------------------------------------------------------------------
-
-## mean-subtract the spectra
-#spectra.raw.mean    <- apply(spectra.ma3, 2, mean)
-#spectra.raw.msub    <- as.matrix(spectra.ma3 - spectra.raw.mean)
-
-## mean-subtract the first derivative
-#spectra.der.1.mean    <- apply(spectra.der.1, 2, mean)
-#spectra.der.1.msub    <- as.matrix(spectra.der.1 - spectra.der.1.mean)
-
-## mean-subtract the second derivative
-#spectra.der.2.mean    <- apply(spectra.der.2, 2, mean)
-#spectra.der.2.msub    <- as.matrix(spectra.der.2 - spectra.der.2.mean)
+## append column names
+colnames(spectra.der.1) <- gsub("m", "d1_", colnames(spectra))
+colnames(spectra.der.2) <- gsub("m", "d2_", colnames(spectra))
 
 
 ##------------------------------------------------------------------
-## Step 4:  Zero-out the co2 band & and edge effects
+## Step 3:  Zero-out the co2 band & and edge effects
 ##------------------------------------------------------------------
 
-## co2 bands
-#spectra.raw.msub[, spectra.co2_index]       <- 0
-#spectra.der.1.msub[, spectra.co2_index]     <- 0
-#spectra.der.2.msub[, spectra.co2_index]     <- 0
-
-## NAs
-spectra.der.1.msub[is.na(spectra.der.1.msub)] <- 0
-spectra.der.2.msub[is.na(spectra.der.2.msub)] <- 0
+## NA(s)
+spectra.der.1[is.na(spectra.der.1)] <- 0
+spectra.der.2[is.na(spectra.der.2)] <- 0
 
 
 ##------------------------------------------------------------------
-## STEP 5: Perform the SVD
+## Step 4: Append the derivatives to the original data
 ##------------------------------------------------------------------
-##  - Column of U are eigenvectors of AAT
-##  - Columns of V are eigenvectors of ATA
-##  - S is a diagonal matrix containing the square rroots of eigenvalues from U or V
-##------------------------------------------------------------------
+all.proc    <- data.frame(
+                    comb.tmp[, -spectra.index],
+                    spectra[, -spectra.co2_index],
+                    spectra.der.1[, -spectra.co2_index],
+                    spectra.der.2[, -spectra.co2_index])
 
-## raw spectra
-spectra.raw.svd         <- svd(t(spectra.raw))
-spectra.pct_var         <- cumsum(spectra.raw.svd$d / sum(spectra.raw.svd$d))
-
-## 1st derivatives
-#spectra.der.1.svd       <- svd(t(spectra.der.1.msub))
-#spectra.der.1.pct_var   <- cumsum(spectra.der.1.svd$d / sum(spectra.der.1.svd$d))
-
-## 2nd derivatives
-#spectra.der.2.svd       <- svd(t(spectra.der.2.msub))
-#spectra.der.2.pct_var   <- cumsum(spectra.der.2.svd$d / sum(spectra.der.2.svd$d))
+train.proc  <- all.proc[(all.proc$id == 1), ]
+test.proc   <- all.proc[(all.proc$id == 0), ]
 
 
 
-
-## do a box-cox transformation if all x > 0
-#if ( any(x < 0) ) {
-#    orig.x <- x
-#} else {
-#    orig.x  <- x
-#    lambda	<- BoxCox.lambda(x, method="guerrero", lower=0, upper=1)
-#    x	    <- BoxCox(x, lambda)
-#}
-
-
-
-
-
-
-##------------------------------------------------------------------
+##******************************************************************
 ## Save results
-##------------------------------------------------------------------
-##save.image("02_AfricaProcessedData.Rdata")
+##******************************************************************
+save(
+    all.proc,
+    train.proc,
+    test.proc,
+    spectra.co2_bands,
+    spectra.wn,
+    spectra.nm,
+    spectra.index,
+    target.vars,
+    target.bc.vars,
+    target.bc.lambda,
+    file="02_AfricaProcessedData.Rdata")
+
+
+
+
+
+

@@ -1,46 +1,6 @@
 ##------------------------------------------------------------------
 ## Notes on the data:
 ##------------------------------------------------------------------
-## Data fields
-##
-## SOC, pH, Ca, P, Sand are the five target variables for predictions.
-##
-## The data have been monotonously transformed from the original
-## measurements and thus include negative values.
-##
-##  PIDN: unique soil sample identifier
-##  SOC: Soil organic carbon
-##  pH: pH values
-##  Ca: Mehlich-3 extractable Calcium
-##  P: Mehlich-3 extractable Phosphorus
-##  Sand: Sand content
-##
-##  m7497.96 - m599.76: There are 3,578 mid-infrared absorbance measurements.
-##      For example, the "m7497.96" column is the absorbance at wavenumber
-##      7497.96 cm-1. We suggest you to remove spectra CO2 bands which are
-##      in the region m2379.76 to m2352.76, but you do not have to.
-##
-##  Depth: Depth of the soil sample (2 categories: "Topsoil", "Subsoil")
-##
-##  We have also included some potential spatial predictors from remote
-##  sensing data sources. Short variable descriptions are provided below
-##  and additional descriptions can be found at AfSIS data. The data
-##  have been mean centered and scaled.
-##
-##  BSA:    average long-term Black Sky Albedo measurements from MODIS
-##          satellite images (BSAN = near-infrared, BSAS = shortwave, BSAV = visible)
-##  CTI:    compound topographic index calculated from Shuttle Radar
-##          Topography Mission elevation data
-##  ELEV:   Shuttle Radar Topography Mission elevation data
-##  EVI:    average long-term Enhanced Vegetation Index from MODIS satellite images.
-##  LST:    average long-term Land Surface Temperatures from MODIS satellite images
-##          (LSTD = day time temperature, LSTN = night time temperature)
-##  Ref:    average long-term Reflectance measurements from MODIS satellite images
-##          (Ref1 = blue, Ref2 = red, Ref3 = near-infrared, Ref7 = mid-infrared)
-##  Reli:   topographic Relief calculated from Shuttle Radar Topography mission elevation data
-##  TMAP & TMFI: average long-term Tropical Rainfall Monitoring Mission data
-##          (TMAP = mean annual precipitation, TMFI = modified Fournier index)
-##------------------------------------------------------------------
 
 ##------------------------------------------------------------------
 ## Load libraries
@@ -66,68 +26,148 @@ rm(list=ls())
 setwd("/Users/alexstephens/Development/kaggle/africa/data/proc")
 
 ##------------------------------------------------------------------
-## Load raw data
+## Load processed data
 ##------------------------------------------------------------------
-#load("01_AfricaRawTest.Rdata")
-load("01_AfricaRawTrain.Rdata")
+load("02_AfricaProcessedData.Rdata")
 
 ##------------------------------------------------------------------
 ## Define target variables
 ##------------------------------------------------------------------
-target.vars <- c("ca","p","ph","soc","sand")
-
+target.vars     <- c("ca.bc","p.bc","ph.bc","soc.bc","sand.bc")
+nonspec.vars    <- c("bsan","bsas","bsav","cti","elev","evi","lstd","lstn","ref1","ref2","ref3","ref7","reli","tmap","tmfi","depth")
+spec.vars       <- colnames(train.proc)[grep("^m", colnames(train.proc))]
+der1.vars       <- colnames(train.proc)[grep("^d1", colnames(train.proc))]
+der2.vars       <- colnames(train.proc)[grep("^d2", colnames(train.proc))]
+id.vars         <- c("pidn", "id")
 
 ##******************************************************************
 ## Simple beat-the-benchmark model
 ##******************************************************************
 
-##------------------------------------------------------------------
-## Step 1: Identify features in the data
-##------------------------------------------------------------------
-
-## identify known problem areas
-spectra.co2_bands   <- c("m2379.76", "m2377.83", "m2375.9", "m2373.97", "m2372.04",
-"m2370.11", "m2368.18", "m2366.26","m2364.33", "m2362.4",
-"m2360.47", "m2358.54", "m2356.61", "m2354.68", "m2352.76")
-
 ## define indices
-spec.idx            <- 2:3579
-target.idx          <- which(names(train.raw) %in% target.vars)
-nonspec.idx         <- setdiff(2:3600, union(spec.idx, target.idx))
-spectra.co2_index   <- which(colnames(train.raw) %in% spectra.co2_bands)
-
-## create a binary variables for depth
-train.raw$depth     <- ifelse(train.raw$depth == "Topsoil", 1, 0)
+target.idx      <- which(names(train.proc) %in% target.vars)
+predictor.idx   <- which(!(names(train.proc) %in% c(target.vars, id.vars)))
 
 
 ##------------------------------------------------------------------
-## Step 2:  Use caret to find the optimal tuning params for each fit
+## Preprocess chunks of the data
 ##------------------------------------------------------------------
 
-ctrl        <- trainControl(method = "cv", savePred=TRUE)
-svm.grid    <- expand.grid(C = 2^(seq(-2,10,1)))
+nonspec.x       <- train.proc[, c(nonspec.vars)]
+preProcValues   <- preProcess(nonspec.x, method = c("center", "scale"))
+nonspec.sc      <- predict(preProcValues, nonspec.x)
+
+
+
+nonspec.zsd     <- which( apply(nonspec.x, 2, sd) == 0 )
+if (length(nonspec.zsd) > 0) {
+    nonspec.x <- nonspec.x[, -nonspec.zsd]
+}
+
+spec.x       <- train.proc[, c(spec.vars)]
+spec.zsd     <- which( apply(spec.x, 2, sd) == 0 )
+if (length(spec.zsd) > 0) {
+    spec.x <- spec.x[, -spec.zsd]
+}
+preProcValues   <- preProcess(spec.x, method = c("center", "scale"))
+spec.sc      <- predict(preProcValues, spec.x)
+
+
+
+der1.x       <- train.proc[, c(der1.vars)]
+der1.zsd     <- which( apply(der1.x, 2, sd) == 0 )
+if (length(der1.zsd) > 0) {
+    der1.x <- der1.x[, -der1.zsd]
+}
+
+der2.x       <- train.proc[, c(der2.vars)]
+der2.zsd     <- which( apply(der2.x, 2, sd) == 0 )
+if (length(der2.zsd) > 0) {
+    der2.x <- der2.x[, -der2.zsd]
+}
+
+
+
+##------------------------------------------------------------------
+## Step 1:  Use caret to find the optimal tuning params for each fit
+##------------------------------------------------------------------
+
+ctrl        <- trainControl(method = "cv", savePred=FALSE)
+svm.grid    <- expand.grid(C = 2^(seq(-1,6,1)))
+#svm.grid    <- expand.grid(C = 1)
+gbm.grid    <- expand.grid(interaction.depth = c(1, 5, 9, 13),
+                        n.trees = 150,
+                        shrinkage = 0.1)
 tmp.res     <- list()
 
 ## loop over each target variable
-for (i in 1:length(target.vars)) {
+#for (i in 1:length(target.vars)) {
+for (i in 2:2) {
     
     ## load all raw variables
-    tmp.data            <- train.raw[, c(target.idx[i], spec.idx, nonspec.idx)]
+    tmp.x                   <- data.frame(spec.x)
+    tmp.y                   <- train.proc[, c(target.vars[i])]
+    tmp.data                <- data.frame(tmp.y, tmp.x)
+    colnames(tmp.data)[1]   <- target.vars[i]
     
     ## use all variables in the file
     tmp.formula         <- as.formula(paste0(target.vars[i], " ~ ."))
     
     ## save the results
     tmp.res[[i]]        <- train(tmp.formula, data=tmp.data, method = "svmLinear", verbose=FALSE, trControl = ctrl, tuneGrid=svm.grid)
+    #tmp.res[[i]]        <- train(tmp.formula, data=tmp.data, method = "svmRadial", verbose=FALSE, trControl = ctrl)
+    #tmp.res[[i]]        <- train(tmp.formula, data=tmp.data, method = "gbm", verbose=FALSE, trControl = ctrl, tuneGrid=gbm.grid)
+
 }
 
 
-## minmum RMSE (all variables)
+
+
+## minmum RMSE (all variables; svmLinear)
 ## [1] = 0.335 +- 0.113, C = 1
 ## [2] = 0.830 +- 0.355, C = 16
 ## [3] = 0.326 +- 0.058, C = 8
 ## [4] = 0.303 +- 0.072, C = 1
 ## [5] = 0.333 +- 0.049, C = 1
+
+## minmum RMSE (only spectra; svmLinear)
+## [1] = 0.323 +- 0.090, C = 1
+## [2] = 0.xxx +- 0.xxx, C = 1
+## [3] = 0.xxx +- 0.xxx, C = 1
+## [4] = 0.xxx +- 0.xxx, C = 1
+## [5] = 0.xxx +- 0.xxx, C = 1
+
+
+## minmum RMSE (only spectra; centered/scaled; svmLinear)
+## [1] = 0.333 +- 0.151, C = 1
+## [2] = 0.xxx +- 0.xxx, C = 1
+## [3] = 0.xxx +- 0.xxx, C = 1
+## [4] = 0.xxx +- 0.xxx, C = 1
+## [5] = 0.xxx +- 0.xxx, C = 1
+
+
+## minmum RMSE (only der1; svmLinear)
+## [1] = 0.450 +- 0.100, C = 1
+## [2] = 0.xxx +- 0.xxx, C = 1
+## [3] = 0.xxx +- 0.xxx, C = 1
+## [4] = 0.xxx +- 0.xxx, C = 1
+## [5] = 0.xxx +- 0.xxx, C = 1
+
+## minmum RMSE (only der2; svmLinear)
+## [1] = 0.491 +- 0.142, C = 1
+## [2] = 0.xxx +- 0.xxx, C = 1
+## [3] = 0.xxx +- 0.xxx, C = 1
+## [4] = 0.xxx +- 0.xxx, C = 1
+## [5] = 0.xxx +- 0.xxx, C = 1
+
+## minmum RMSE (spectra + der1; svmLinear)
+## [1] = 0.461 +- 0.102, C = 1
+## [2] = 0.xxx +- 0.xxx, C = 1
+## [3] = 0.xxx +- 0.xxx, C = 1
+## [4] = 0.xxx +- 0.xxx, C = 1
+## [5] = 0.xxx +- 0.xxx, C = 1
+
+
 
 ## use the propectr package to pre-process some of the spectra
 
